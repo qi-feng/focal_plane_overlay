@@ -5,6 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 
+import pandas as pd
+import plotly.graph_objects as go
+
 from .utils import (
     read_raw, stretch_to_uint8, load_yaml, load_catalog, load_tracking,
     parse_local_timestamp_from_filename, nearest_tracking_row, star_altaz,
@@ -27,6 +30,12 @@ def build_parser():
     p.add_argument('--output', required=True)
     p.add_argument('--zoom-output', default=None, help='Optional second output image zoomed on the camera-center/star offset vector.')
     p.add_argument('--zoom-halfwidth', type=float, default=120.0, help='Half-width in pixels for --zoom-output view.')
+    p.add_argument('--vmin', type=float, default=50.0, help='vmin')
+    p.add_argument(
+        '--interactive-output',
+        default=None,
+        help='Optional interactive Plotly HTML output for inspecting x, y, z and overlays.'
+    )
     return p
 
 
@@ -44,6 +53,119 @@ def pixel_to_sky_offset(delta_pix, alpha_deg, pix_per_arcmin):
     delta_el_arcmin = -base[0]
     delta_east_arcmin = -base[1]
     return float(delta_east_arcmin), float(delta_el_arcmin)
+
+
+def save_interactive_plotly(
+    image,
+    cat,
+    src,
+    leds_found,
+    cam_center,
+    star_xy,
+    offset_start_xy,
+    offset_end_xy,
+    offset_label,
+    output_html,
+    vmin=0,
+    vmax=255,
+):
+    fig = go.Figure()
+
+    fig.add_trace(go.Heatmap(
+        z=image,
+        colorscale='gray',
+        zmin=vmin,
+        zmax=vmax,
+        name='image',
+        hovertemplate='x=%{x}<br>y=%{y}<br>z=%{z}<extra></extra>',
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=cat['X_IMAGE'],
+        y=cat['Y_IMAGE'],
+        mode='markers+text',
+        text=cat['ID'].astype(str),
+        textposition='top center',
+        marker=dict(size=10, color='red', symbol='circle-open', line=dict(width=2)),
+        name='catalog sources',
+        hovertemplate=(
+            'ID=%{text}<br>'
+            'x=%{x:.2f}<br>'
+            'y=%{y:.2f}<extra></extra>'
+        ),
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=leds_found[:, 0],
+        y=leds_found[:, 1],
+        mode='markers+text',
+        text=[f'L{i+1}' for i in range(len(leds_found))],
+        textposition='top center',
+        marker=dict(size=14, color='cyan', symbol='circle-open', line=dict(width=3)),
+        name='LEDs',
+        hovertemplate='LED %{text}<br>x=%{x:.2f}<br>y=%{y:.2f}<extra></extra>',
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=[cam_center[0]],
+        y=[cam_center[1]],
+        mode='markers+text',
+        text=['center'],
+        textposition='top right',
+        marker=dict(size=16, color='lime', symbol='cross'),
+        name='camera center',
+        hovertemplate='camera center<br>x=%{x:.2f}<br>y=%{y:.2f}<extra></extra>',
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=[star_xy[0]],
+        y=[star_xy[1]],
+        mode='markers+text',
+        text=[f"star ID {int(src['ID'])}"],
+        textposition='top right',
+        marker=dict(size=16, color='yellow', symbol='x'),
+        name='selected star',
+        hovertemplate='selected star<br>x=%{x:.2f}<br>y=%{y:.2f}<extra></extra>',
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=[offset_start_xy[0], offset_end_xy[0]],
+        y=[offset_start_xy[1], offset_end_xy[1]],
+        mode='lines+markers',
+        line=dict(color='magenta', width=4),
+        marker=dict(size=8, color='magenta'),
+        name='offset vector',
+        hovertemplate='x=%{x:.2f}<br>y=%{y:.2f}<extra></extra>',
+    ))
+
+    fig.add_annotation(
+        x=0.02,
+        y=0.98,
+        xref='paper',
+        yref='paper',
+        text=offset_label.replace('\n', '<br>'),
+        showarrow=False,
+        align='left',
+        bgcolor='rgba(0,0,0,0.65)',
+        font=dict(color='white'),
+    )
+
+    fig.update_yaxes(autorange='reversed', scaleanchor='x')
+    fig.update_xaxes(constrain='domain')
+
+    fig.update_layout(
+        title='Interactive focal-plane overlay',
+        width=1400,
+        height=950,
+        dragmode='pan',
+        hovermode='closest',
+    )
+
+    fig.write_html(output_html, include_plotlyjs='cdn')
+    print(f'Saved interactive {output_html}')
+
+
+
 
 def main():
     args = build_parser().parse_args()
@@ -130,7 +252,8 @@ def main():
         vector_start_xy = offset_star_xy if (abs(offset_el_arcmin) > 0 or abs(offset_east_arcmin) > 0) else cam_center
         vector_label = 'pointing offset'
 
-    img8 = stretch_to_uint8(image)
+    #img8 = stretch_to_uint8(image)
+    img8 = image
     fig, ax = plt.subplots(figsize=(12, 9))
     ax.imshow(img8, origin='upper', cmap='gray', vmin=0, vmax=255)
 
@@ -284,6 +407,22 @@ def main():
     fig.savefig(args.output, dpi=150)
     print(f'Saved {args.output}')
 
+    if args.interactive_output:
+        save_interactive_plotly(
+            image=img8,
+            cat=cat,
+            src=src,
+            leds_found=np.asarray(leds_found),
+            cam_center=cam_center,
+            star_xy=star_xy,
+            offset_start_xy=offset_start_xy,
+            offset_end_xy=offset_end_xy,
+            offset_label=offset_label,
+            output_html=args.interactive_output,
+            vmin=0,
+            vmax=255,
+        )
+
     if args.zoom_output:
         zhw = float(args.zoom_halfwidth)
         zoom_center = 0.5 * (offset_start_xy + offset_end_xy)
@@ -375,6 +514,8 @@ def main():
             print(f'Cmd offset xy:     x={offset_star_xy[0]:.2f} y={offset_star_xy[1]:.2f}')
             print(f'Residual offset:   dEast={d_east_arcmin_cmd:.3f} arcmin dEl={d_el_arcmin_cmd:.3f} arcmin')
     print(f'pix_per_arcmin:    {ppm:.6f}')
+
+
 
 if __name__ == '__main__':
     main()
