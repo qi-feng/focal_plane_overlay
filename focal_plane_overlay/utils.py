@@ -103,4 +103,4 @@ def sky_offset_to_pixel(delta_east_arcmin, delta_el_arcmin, alpha_deg, pix_per_a
     return R @ base
 
 def pix_per_arcmin(pix2mm, mm_per_arcmin):
-    return mm_per_arcmin / pix2mm
+    return mm_per_arcmin * pix2mm
