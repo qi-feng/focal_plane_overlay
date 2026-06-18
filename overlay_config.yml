@@ -12,8 +12,8 @@ target:
   dec_deg: 19.182409
 
 optics:
-  #pix2mm: 0.482
-  pix2mm: 0.964
+  pix2mm: 0.482
+  #pix2mm: 0.964
   mm_per_arcmin: 0.6153846154
   axis_length_arcmin: 20.0
 
